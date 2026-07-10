@@ -1,0 +1,15 @@
+[submodule "deepfake-media-transport"]
+	path = deepfake-media-transport
+	url = https://github.com/alfa-deepfake/deepfake-media-transport.git
+[submodule "deepfake-riskapi"]
+	path = deepfake-riskapi
+	url = https://github.com/alfa-deepfake/deepfake-riskapi.git
+[submodule "deepfake-stream-signature"]
+	path = deepfake-stream-signature
+	url = https://github.com/alfa-deepfake/deepfake-stream-signature.git
+[submodule "deepfake-virtualcam-check"]
+	path = deepfake-virtualcam-check
+	url = https://github.com/alfa-deepfake/deepfake-virtualcam-check.git
+[submodule "deepfake-voice-inference"]
+	path = deepfake-voice-inference
+	url = https://github.com/alfa-deepfake/deepfake-voice-inference.git
