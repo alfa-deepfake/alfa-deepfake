@@ -1,0 +1,14 @@
+# Workspace-wide requirements for a shared .venv at the alfa-deepfake root.
+#
+# Cluster setup:
+#   python3.10 -m venv .venv
+#   . .venv/bin/activate
+#   python -m pip install --upgrade pip
+#   python -m pip install -r requirements.txt
+
+-r deepfake-audio-video-inference/requirements.txt
+-r deepfake-riskapi/requirements.txt
+
+-e ./deepfake-media-transport
+-e ./deepfake-stream-signature
+-e ./deepfake-virtualcam-check
