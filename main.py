@@ -13,9 +13,11 @@ from pathlib import Path
 
 
 ROOT = Path(__file__).resolve().parent
-VOICE = ROOT / "deepfake-voice-inference"
+VOICE = ROOT / "deepfake-audio-video-inference"
 VIRTUALCAM = ROOT / "deepfake-virtualcam-check"
 RISKAPI = ROOT / "deepfake-riskapi"
+MEDIA_TRANSPORT_SRC = ROOT / "deepfake-media-transport" / "src"
+STREAM_SIGNATURE_SRC = ROOT / "deepfake-stream-signature" / "src"
 
 
 @dataclass(frozen=True)
@@ -25,6 +27,7 @@ class ProcessSpec:
     cwd: Path
     env: dict[str, str] | None = None
     wait_before: tuple[str, str, int, float] | None = None
+    required_modules: tuple[str, ...] = ()
 
 
 def main() -> int:
@@ -46,6 +49,12 @@ def main() -> int:
 
     if not ask_bool("\nStart these processes?", True):
         return 0
+
+    try:
+        preflight_processes(specs)
+    except RuntimeError as exc:
+        print(f"\n{exc}")
+        return 1
 
     return run_processes(specs)
 
@@ -82,8 +91,8 @@ def collect_config() -> dict[str, object]:
         cfg["ssh_user"] = ask_text("SSH user", "master")
         cfg["ssh_host"] = ask_text("SSH host", "62.183.4.208")
         cfg["remote_dir"] = ask_text(
-            "Remote voice-inference directory",
-            "/home/master/work/alfa-deepfake/deepfake-voice-inference",
+            "Remote audio-video-inference directory",
+            "/home/master/work/alfa-deepfake/deepfake-audio-video-inference",
         )
         if cfg["cluster_server"]:
             cfg["restart_cluster_server"] = ask_bool(
@@ -189,6 +198,15 @@ def build_processes(cfg: dict[str, object]) -> list[ProcessSpec]:
                 "SSH_USER": str(cfg["ssh_user"]),
                 "SSH_HOST": str(cfg["ssh_host"]),
                 "REMOTE_DIR": str(cfg["remote_dir"]),
+                "PYTHON_BIN": str(python_bin(VIRTUALCAM)),
+                "PYTHONPATH": pythonpath(
+                    [
+                        VIRTUALCAM / "src",
+                        MEDIA_TRANSPORT_SRC,
+                        STREAM_SIGNATURE_SRC,
+                    ],
+                    os.environ.get("PYTHONPATH"),
+                ),
                 "CAPTURE_DURATION": str(cfg["capture_duration"]),
                 "MAX_FRAMES": str(cfg["max_frames"]),
                 "DEVICE_LABEL": str(cfg["device_label"]),
@@ -222,7 +240,10 @@ def build_processes(cfg: dict[str, object]) -> list[ProcessSpec]:
     if cfg.get("stream_client"):
         python = python_bin(VOICE)
         env = os.environ.copy()
-        env["PYTHONPATH"] = str(VOICE) + maybe_pathsep(env.get("PYTHONPATH"))
+        env["PYTHONPATH"] = pythonpath(
+            [VOICE, MEDIA_TRANSPORT_SRC, STREAM_SIGNATURE_SRC],
+            env.get("PYTHONPATH"),
+        )
         cmd = [
             str(python),
             "-m",
@@ -253,6 +274,7 @@ def build_processes(cfg: dict[str, object]) -> list[ProcessSpec]:
                 env=env,
                 cmd=cmd,
                 wait_before=("local", "13000", 60, cfg),
+                required_modules=("numpy", "cv2", "sounddevice", "PIL"),
             )
         )
 
@@ -321,6 +343,44 @@ def pipe_output(name: str, proc: subprocess.Popen[str]) -> None:
     assert proc.stdout is not None
     for line in proc.stdout:
         print(f"[{name}] {line}", end="")
+
+
+def preflight_process(spec: ProcessSpec) -> None:
+    if not spec.required_modules:
+        return
+    code = (
+        "import importlib.util, sys; "
+        f"mods={list(spec.required_modules)!r}; "
+        "missing=[m for m in mods if importlib.util.find_spec(m) is None]; "
+        "sys.exit('\\n'.join(missing) if missing else 0)"
+    )
+    result = subprocess.run(
+        [spec.cmd[0], "-c", code],
+        cwd=spec.cwd,
+        env=spec.env,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+        text=True,
+        check=False,
+    )
+    if result.returncode == 0:
+        return
+    missing = [line for line in result.stdout.splitlines() if line.strip()]
+    detail = ", ".join(missing) if missing else result.stderr.strip()
+    raise RuntimeError(
+        f"{spec.name} Python is missing required modules: {detail}\n"
+        f"Create/install the local workspace venv first:\n"
+        f"  cd {ROOT}\n"
+        f"  python3 -m venv .venv\n"
+        f"  . .venv/bin/activate\n"
+        f"  python -m pip install --upgrade pip\n"
+        f"  python -m pip install -r requirements-client.txt"
+    )
+
+
+def preflight_processes(specs: list[ProcessSpec]) -> None:
+    for spec in specs:
+        preflight_process(spec)
 
 
 def wait_before_start(spec: ProcessSpec) -> None:
@@ -395,8 +455,11 @@ def ask_text(prompt: str, default: str) -> str:
 
 
 def python_bin(project: Path) -> Path | str:
+    workspace_candidate = ROOT / ".venv" / "bin" / "python"
+    if workspace_candidate.exists():
+        return workspace_candidate
     candidate = project / ".venv" / "bin" / "python"
-    return candidate if candidate.exists() else "python3.10"
+    return candidate if candidate.exists() else sys.executable
 
 
 def ssh_base(cfg: dict[str, object]) -> list[str]:
@@ -418,6 +481,12 @@ def build_remote_server_command(
 ) -> str:
     env_prefix = format_remote_env(remote_env)
     path_prefix = 'PATH="$HOME/.local/bin:$PATH" '
+    workspace_venv_bootstrap = (
+        "ALFA_ROOT=\"$(cd .. && pwd)\"; "
+        "if [ -f \"$ALFA_ROOT/.venv/bin/activate\" ]; then "
+        ". \"$ALFA_ROOT/.venv/bin/activate\"; "
+        "fi; "
+    )
     python_bootstrap = (
         "mkdir -p \"$HOME/.local/bin\" && "
         "if ! command -v python >/dev/null 2>&1; then "
@@ -428,16 +497,18 @@ def build_remote_server_command(
     if restart:
         return (
             f"cd {quoted_dir} && "
+            f"{workspace_venv_bootstrap}"
             f"{python_bootstrap}"
             "if ss -ltn 'sport = :13000' | grep -q LISTEN; then "
             "echo 'stopping existing stream_server on 127.0.0.1:13000'; "
-            "pkill -f 'backend.media_gateway.stream_server' || true; "
+            "pkill -f '[b]ackend.media_gateway.stream_server' || true; "
             "sleep 2; "
             "fi; "
             f"{path_prefix}{env_prefix} exec ./scripts/server.sh"
         )
     return (
         f"cd {quoted_dir} && "
+        f"{workspace_venv_bootstrap}"
         f"{python_bootstrap}"
         "if ss -ltn 'sport = :13000' | grep -q LISTEN; then "
         "echo 'stream_server is already listening on 127.0.0.1:13000'; "
@@ -465,7 +536,15 @@ def format_env_prefix(env: dict[str, str] | None) -> str:
     if not env:
         return ""
     shown = []
-    for key in ("MONGODB_URI", "PYTHONPATH", "SSH_KEY", "SSH_PORT", "SSH_USER", "SSH_HOST"):
+    for key in (
+        "MONGODB_URI",
+        "PYTHONPATH",
+        "PYTHON_BIN",
+        "SSH_KEY",
+        "SSH_PORT",
+        "SSH_USER",
+        "SSH_HOST",
+    ):
         if key in env and env[key]:
             shown.append(f"{key}={shlex.quote(env[key])}")
     return " ".join(shown) + (" " if shown else "")
@@ -477,6 +556,11 @@ def expand_user(value: str) -> str:
 
 def maybe_pathsep(value: str | None) -> str:
     return os.pathsep + value if value else ""
+
+
+def pythonpath(paths: list[Path], existing: str | None = None) -> str:
+    value = os.pathsep.join(str(path) for path in paths)
+    return value + maybe_pathsep(existing)
 
 
 if __name__ == "__main__":
