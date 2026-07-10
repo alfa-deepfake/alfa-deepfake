@@ -21,7 +21,7 @@ RiskAPI is the result ingestion/storage boundary. It does not run the checks
 itself and keeps the score payload flexible so each detector can submit its own
 JSON object.
 
-## deepfake-voice-inference
+## deepfake-audio-video-inference
 
 Headless realtime audio/video deepfake inference service (trimmed fork of RVC
 WebUI). The laptop captures mic + webcam, sends both streams through a single
@@ -40,13 +40,13 @@ back for local preview.
   `deepfake-media-transport` sibling package (imported as
   `deepfake_media_transport`).
 - **Cluster:** `ssh -i ~/.ssh/id_ed25519 -p 22010 master@62.183.4.208`,
-  path `/home/master/work/alfa-deepfake/deepfake-voice-inference`. The `deepfake-media-transport`
+  path `/home/master/work/alfa-deepfake/deepfake-audio-video-inference`. The `deepfake-media-transport`
   and `deepfake-stream-signature` sibling packages are deployed alongside it in
   `/home/master/work/alfa-deepfake/` and installed editable into its venv.
 - **Runtime assets (not committed):** `assets/weights/voice_model.pth`,
   `assets/indices/voice_model.index`, `assets/hubert/hubert_base.pt`.
   Deep-Live-Cam expected at `~/workspace_w9line/deep_face/extracted/Deep-Live-Cam`.
-- Full startup commands live in `deepfake-voice-inference/README.md` and
+- Full startup commands live in `deepfake-audio-video-inference/README.md` and
   `docs/en/media_gateway.md`.
 
 ## deepfake-media-transport
@@ -59,7 +59,7 @@ format lives in exactly one place instead of being copied between packages.
   `MediaPacket`, `packetize_payload`, `PacketReassembler`; `framing` — length-
   prefixed TCP helpers `read_exact`, `read_frame`, `write_frame`,
   `iter_length_prefixed_packets`.
-- **Consumers:** `deepfake-voice-inference` (stream server/client) and
+- **Consumers:** `deepfake-audio-video-inference` (stream server/client) and
   `deepfake-virtualcam-check` (gateway packet parsing) both import it.
 - **Tests:** `./scripts/test.sh`.
 
@@ -100,14 +100,14 @@ but no implementation directory exists in this workspace yet.
 
 ## Relationship between the two packages
 
-`deepfake-voice-inference` and `deepfake-virtualcam-check` both consume the
+`deepfake-audio-video-inference` and `deepfake-virtualcam-check` both consume the
 `deepfake-stream-signature` and `deepfake-media-transport` sibling packages.
 These are declared as editable path dependencies (Poetry `develop = true` /
 uv `[tool.uv.sources]` `editable = true`) and installed into each package venv
 with `uv pip install -e ../deepfake-media-transport -e ../deepfake-stream-signature`.
 There is no `sys.path` bootstrapping anymore.
 
-The signature layer inside voice-inference (`signature_policy.py`,
+The signature layer inside audio-video-inference (`signature_policy.py`,
 `signed_packets.py`, `signature_cli.py`, `stream_signature.py`) wires the
 signature library into the media gateway with `--signature-policy off|log|block`.
 `stream_signature.py` is a thin adapter from `deepfake_media_transport.MediaPacket`
@@ -126,7 +126,7 @@ Completed a global KISS/DRY refactor:
 - Extracted the media-gateway wire protocol + framing into the new
   `deepfake-media-transport` package; removed the duplicate protocol copy that
   lived in `deepfake-virtualcam-check/gateway.py`.
-- Removed the legacy UDP runtime from `deepfake-voice-inference`
+- Removed the legacy UDP runtime from `deepfake-audio-video-inference`
   (`server.py`, `capture_client.py`, `preview_client.py`, `udp_tcp_tunnel.py`,
   `session.py`, `tools/udp_infer.py`, the `udp-*.sh` scripts, and
   `docs/en/udp_inference.md`). The TCP stream path is the only runtime.
