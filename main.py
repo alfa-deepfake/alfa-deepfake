@@ -18,6 +18,21 @@ VIRTUALCAM = ROOT / "deepfake-virtualcam-check"
 RISKAPI = ROOT / "deepfake-riskapi"
 MEDIA_TRANSPORT_SRC = ROOT / "deepfake-media-transport" / "src"
 STREAM_SIGNATURE_SRC = ROOT / "deepfake-stream-signature" / "src"
+COLOR_ENABLED = sys.stdout.isatty() and os.environ.get("NO_COLOR") is None
+ACCENT = "red"
+LOGO_LINES = (
+    "█████  █      █████  █████",
+    "█   █  █      █      █   █",
+    "█████  █      ████   █████",
+    "█   █  █      █      █   █",
+    "█   █  █████  █      █   █",
+    "                                        console v.0.1",
+    "████   █████  █████  ████   █████  █████  █  █  █████",
+    "█   █  █      █      █   █  █      █   █  █ █   █    ",
+    "█   █  ████   ████   ████   ████   █████  ██    ████ ",
+    "█   █  █      █      █      █      █   █  █ █   █    ",
+    "████   █████  █████  █      █      █   █  █  █  █████",
+)
 
 
 @dataclass(frozen=True)
@@ -30,46 +45,133 @@ class ProcessSpec:
     required_modules: tuple[str, ...] = ()
 
 
+def color(style: str, value: str) -> str:
+    if not COLOR_ENABLED:
+        return value
+    codes = {
+        "bold": "1",
+        "dim": "2",
+        "red": "31",
+        "green": "32",
+        "yellow": "33",
+        "blue": "34",
+        "cyan": "36",
+    }
+    code = codes.get(style)
+    return f"\033[{code}m{value}\033[0m" if code else value
+
+
+def dim(value: str) -> str:
+    return color("dim", value)
+
+
+def section(title: str) -> None:
+    print()
+    print(color(ACCENT, f"== {title} =="))
+
+
+def step(message: str) -> None:
+    print(f"{color(ACCENT, '->')} {message}...")
+
+
+def success(message: str) -> None:
+    print(f"{color('green', 'OK')} {message}")
+
+
+def warn(message: str) -> None:
+    print(f"{color('yellow', 'Warning:')} {message}")
+
+
+def error(message: str) -> None:
+    print(f"\n{color('red', 'Error:')} {message}")
+
+
+def note(message: str) -> None:
+    print(f"{color(ACCENT, 'Note:')} {message}")
+
+
+def print_banner() -> None:
+    width = max(len(line) for line in LOGO_LINES)
+    border = "╭" + "─" * (width + 2) + "╮"
+    print(color(ACCENT, border))
+    for line in LOGO_LINES:
+        print(
+            color(ACCENT, "│ ")
+            + color("bold", color(ACCENT, line.ljust(width)))
+            + color(ACCENT, " │")
+        )
+    print(color(ACCENT, "╰" + "─" * (width + 2) + "╯"))
+    print(color("bold", "ALFA-DEEPFAKE launcher"))
+    print(dim("Ctrl-C stops all processes started by this launcher."))
+    print(dim(f"Workspace: {ROOT}"))
+
+
+def print_choice(key: str, label: str, description: str) -> None:
+    print(f"  {color('green', key.ljust(10))} {label:<18} {dim(description)}")
+
+
+def print_process_plan(specs: list[ProcessSpec]) -> None:
+    section("Process Plan")
+    for index, spec in enumerate(specs, start=1):
+        env_prefix = format_env_prefix(spec.env)
+        print(f"{color('green', str(index) + '.')} {color('bold', spec.name)}")
+        print(f"   cwd: {spec.cwd}")
+        if spec.wait_before:
+            kind, port, timeout_s, _cfg = spec.wait_before
+            target = "127.0.0.1" if kind == "local" else "cluster 127.0.0.1"
+            print(f"   wait: {target}:{port} for up to {timeout_s}s")
+        if spec.required_modules:
+            print(f"   needs: {', '.join(spec.required_modules)}")
+        print("   cmd:")
+        print(f"     {env_prefix}{shlex.join(spec.cmd)}")
+    print()
+
+
+def prompt_text(prompt: str, default: str) -> str:
+    return f"{color('bold', prompt)} {dim('[' + default + ']')}: "
+
+
 def main() -> int:
-    print("alfa launcher")
-    print("=============")
-    print("Ctrl-C stops all processes started by this launcher.\n")
+    print_banner()
 
     cfg = collect_config()
     specs = build_processes(cfg)
     if not specs:
-        print("Nothing selected.")
+        note("Nothing selected.")
         return 0
 
-    print("\nPlanned processes:")
-    for spec in specs:
-        env_prefix = format_env_prefix(spec.env)
-        print(f"- {spec.name}: cd {spec.cwd}")
-        print(f"  {env_prefix}{shlex.join(spec.cmd)}")
+    print_process_plan(specs)
 
     if not ask_bool("\nStart these processes?", True):
+        note("Cancelled.")
         return 0
 
     try:
+        step("Checking local runtime dependencies")
         preflight_processes(specs)
     except RuntimeError as exc:
-        print(f"\n{exc}")
+        error(str(exc))
         return 1
 
+    step("Starting selected processes")
     return run_processes(specs)
 
 
 def collect_config() -> dict[str, object]:
     cfg: dict[str, object] = {}
 
-    print("Preset:")
-    print("  1. Media stream: cluster server + SSH tunnel + local client")
-    print("  2. Media stream with virtualcam-check proxy")
-    print("  3. RiskAPI only")
-    print("  4. Custom")
+    section("Preset")
+    print_choice("1", "Media stream", "cluster server + SSH tunnel + local client")
+    print_choice(
+        "2", "Virtualcam check", "cluster server + scoring TCP proxy + local client"
+    )
+    print_choice("3", "RiskAPI only", "local FastAPI service")
+    print_choice("4", "Custom", "choose every process manually")
     preset = ask_choice("Choose preset", {"1", "2", "3", "4"}, "2")
 
-    cfg["riskapi"] = preset == "3" or (preset == "4" and ask_bool("Start RiskAPI?", False))
+    cfg["riskapi"] = preset == "3" or (
+        preset == "4" and ask_bool("Start RiskAPI?", False)
+    )
     cfg["cluster_server"] = preset in {"1", "2"} or (
         preset == "4" and ask_bool("Start cluster stream_server over SSH?", True)
     )
@@ -86,6 +188,7 @@ def collect_config() -> dict[str, object]:
     )
 
     if cfg["cluster_server"] or cfg["plain_tunnel"] or cfg["virtualcam_proxy"]:
+        section("Cluster SSH")
         cfg["ssh_key"] = ask_text("SSH key", "~/.ssh/id_ed25519")
         cfg["ssh_port"] = ask_text("SSH port", "22010")
         cfg["ssh_user"] = ask_text("SSH user", "master")
@@ -101,10 +204,12 @@ def collect_config() -> dict[str, object]:
             )
 
     if cfg["cluster_server"] or cfg["stream_client"] or cfg["virtualcam_proxy"]:
-        print("\nStream signature:")
-        print("  off   - no signature verification/signing")
-        print("  log   - verify on server, log bad signatures, accept packets")
-        print("  block - verify on server, drop bad signatures")
+        section("Stream Signature")
+        print_choice("off", "Disabled", "no signature verification/signing")
+        print_choice(
+            "log", "Audit", "verify on server, log bad signatures, accept packets"
+        )
+        print_choice("block", "Strict", "verify on server, drop bad signatures")
         cfg["signature_policy"] = ask_choice(
             "Signature policy",
             {"off", "log", "block"},
@@ -112,25 +217,32 @@ def collect_config() -> dict[str, object]:
         )
         if cfg["signature_policy"] != "off":
             cfg["signature_key"] = ask_text("Signature shared secret", "dev-secret")
-            cfg["signature_key_id"] = ask_text("Signature key id", "deepfake-client-test")
+            cfg["signature_key_id"] = ask_text(
+                "Signature key id", "deepfake-client-test"
+            )
         else:
             cfg["signature_key"] = ""
             cfg["signature_key_id"] = "deepfake-client-test"
 
     if cfg["stream_client"]:
+        section("Local Capture")
         cfg["video_device"] = ask_text("Video device", "0")
         cfg["video_width"] = ask_text("Video width", "512")
         cfg["video_height"] = ask_text("Video height", "288")
         cfg["video_fps"] = ask_text("Video FPS", "15")
         cfg["jpeg_quality"] = ask_text("JPEG quality", "65")
-        cfg["source_wav"] = ask_text("Source wav instead of microphone (empty = mic)", "")
+        cfg["source_wav"] = ask_text(
+            "Source wav instead of microphone (empty = mic)", ""
+        )
 
     if cfg["virtualcam_proxy"]:
+        section("Virtualcam Check")
         cfg["capture_duration"] = ask_text("Virtualcam capture duration seconds", "10")
         cfg["max_frames"] = ask_text("Virtualcam max frames", "120")
         cfg["device_label"] = ask_text("Source device label", "Integrated Camera")
 
     if cfg["riskapi"]:
+        section("RiskAPI")
         cfg["riskapi_host"] = ask_text("RiskAPI host", "127.0.0.1")
         cfg["riskapi_port"] = ask_text("RiskAPI port", "8000")
         cfg["mongodb_uri"] = ask_text(
@@ -266,7 +378,14 @@ def build_processes(cfg: dict[str, object]) -> list[ProcessSpec]:
         if cfg.get("source_wav"):
             cmd.extend(["--source-wav", str(cfg["source_wav"])])
         if signature_key:
-            cmd.extend(["--signature-key", signature_key, "--signature-key-id", signature_key_id])
+            cmd.extend(
+                [
+                    "--signature-key",
+                    signature_key,
+                    "--signature-key-id",
+                    signature_key_id,
+                ]
+            )
         specs.append(
             ProcessSpec(
                 name="stream-client",
@@ -289,7 +408,7 @@ def run_processes(specs: list[ProcessSpec]) -> int:
         stop.set()
         for spec, proc in processes:
             if proc.poll() is None:
-                print(f"\nStopping {spec.name}...")
+                print(f"\n{color('yellow', 'Stopping')} {spec.name}...")
                 proc.terminate()
         deadline = time.time() + 5
         for _spec, proc in processes:
@@ -308,6 +427,7 @@ def run_processes(specs: list[ProcessSpec]) -> int:
     try:
         for spec in specs:
             wait_before_start(spec)
+            step(f"Starting {spec.name}")
             proc = subprocess.Popen(
                 spec.cmd,
                 cwd=spec.cwd,
@@ -318,15 +438,19 @@ def run_processes(specs: list[ProcessSpec]) -> int:
                 bufsize=1,
             )
             processes.append((spec, proc))
-            threading.Thread(target=pipe_output, args=(spec.name, proc), daemon=True).start()
+            threading.Thread(
+                target=pipe_output, args=(spec.name, proc), daemon=True
+            ).start()
             time.sleep(0.3)
 
-        print("\nProcesses started. Press Ctrl-C to stop.\n")
+        print()
+        success("Processes started. Press Ctrl-C to stop.")
+        print()
         while not stop.is_set():
             for spec, proc in processes:
                 code = proc.poll()
                 if code is not None:
-                    print(f"\n{spec.name} exited with code {code}.")
+                    print(f"\n{color('red', spec.name)} exited with code {code}.")
                     terminate_all()
                     return code
             time.sleep(0.5)
@@ -342,7 +466,7 @@ def run_processes(specs: list[ProcessSpec]) -> int:
 def pipe_output(name: str, proc: subprocess.Popen[str]) -> None:
     assert proc.stdout is not None
     for line in proc.stdout:
-        print(f"[{name}] {line}", end="")
+        print(f"{dim('[' + name + ']')} {line}", end="")
 
 
 def preflight_process(spec: ProcessSpec) -> None:
@@ -388,11 +512,11 @@ def wait_before_start(spec: ProcessSpec) -> None:
         return
     kind, port, timeout_s, cfg = spec.wait_before
     if kind == "local":
-        print(f"Waiting for local port 127.0.0.1:{port} before starting {spec.name}...")
+        step(f"Waiting for local port 127.0.0.1:{port} before starting {spec.name}")
         wait_for_local_listener(int(port), timeout_s)
         return
     if kind == "remote":
-        print(f"Waiting for cluster port 127.0.0.1:{port} before starting {spec.name}...")
+        step(f"Waiting for cluster port 127.0.0.1:{port} before starting {spec.name}")
         wait_for_remote_listener(cfg, port, timeout_s)
 
 
@@ -412,7 +536,9 @@ def wait_for_local_listener(port: int, timeout_s: float) -> None:
     raise RuntimeError(f"local port 127.0.0.1:{port} did not start listening")
 
 
-def wait_for_remote_listener(cfg: dict[str, object], port: str, timeout_s: float) -> None:
+def wait_for_remote_listener(
+    cfg: dict[str, object], port: str, timeout_s: float
+) -> None:
     deadline = time.monotonic() + timeout_s
     remote_test = f"ss -ltn 'sport = :{port}' | grep -q LISTEN"
     while time.monotonic() < deadline:
@@ -431,26 +557,26 @@ def wait_for_remote_listener(cfg: dict[str, object], port: str, timeout_s: float
 def ask_bool(prompt: str, default: bool) -> bool:
     suffix = "Y/n" if default else "y/N"
     while True:
-        value = input(f"{prompt} [{suffix}]: ").strip().lower()
+        value = input(prompt_text(prompt, suffix)).strip().lower()
         if not value:
             return default
         if value in {"y", "yes", "д", "да"}:
             return True
         if value in {"n", "no", "н", "нет"}:
             return False
-        print("Please answer yes/no.")
+        warn("Please answer yes/no.")
 
 
 def ask_choice(prompt: str, allowed: set[str], default: str) -> str:
     while True:
-        value = input(f"{prompt} [{default}]: ").strip() or default
+        value = input(prompt_text(prompt, default)).strip() or default
         if value in allowed:
             return value
-        print(f"Allowed values: {', '.join(sorted(allowed))}")
+        warn(f"Allowed values: {', '.join(sorted(allowed))}")
 
 
 def ask_text(prompt: str, default: str) -> str:
-    value = input(f"{prompt} [{default}]: ").strip()
+    value = input(prompt_text(prompt, default)).strip()
     return value if value else default
 
 
@@ -482,15 +608,15 @@ def build_remote_server_command(
     env_prefix = format_remote_env(remote_env)
     path_prefix = 'PATH="$HOME/.local/bin:$PATH" '
     workspace_venv_bootstrap = (
-        "ALFA_ROOT=\"$(cd .. && pwd)\"; "
-        "if [ -f \"$ALFA_ROOT/.venv/bin/activate\" ]; then "
-        ". \"$ALFA_ROOT/.venv/bin/activate\"; "
+        'ALFA_ROOT="$(cd .. && pwd)"; '
+        'if [ -f "$ALFA_ROOT/.venv/bin/activate" ]; then '
+        '. "$ALFA_ROOT/.venv/bin/activate"; '
         "fi; "
     )
     python_bootstrap = (
-        "mkdir -p \"$HOME/.local/bin\" && "
+        'mkdir -p "$HOME/.local/bin" && '
         "if ! command -v python >/dev/null 2>&1; then "
-        "ln -sfn \"$(command -v python3.10)\" \"$HOME/.local/bin/python\"; "
+        'ln -sfn "$(command -v python3.10)" "$HOME/.local/bin/python"; '
         "fi; "
     )
     quoted_dir = shlex.quote(remote_dir)
