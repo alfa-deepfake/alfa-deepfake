@@ -83,7 +83,7 @@ def collect_config() -> dict[str, object]:
         cfg["ssh_host"] = ask_text("SSH host", "62.183.4.208")
         cfg["remote_dir"] = ask_text(
             "Remote voice-inference directory",
-            "/home/master/work/deepfake-audio-video-inference",
+            "/home/master/work/alfa-deepfake/deepfake-voice-inference",
         )
         if cfg["cluster_server"]:
             cfg["restart_cluster_server"] = ask_bool(
@@ -396,7 +396,7 @@ def ask_text(prompt: str, default: str) -> str:
 
 def python_bin(project: Path) -> Path | str:
     candidate = project / ".venv" / "bin" / "python"
-    return candidate if candidate.exists() else "python"
+    return candidate if candidate.exists() else "python3.10"
 
 
 def ssh_base(cfg: dict[str, object]) -> list[str]:
@@ -417,25 +417,34 @@ def build_remote_server_command(
     restart: bool,
 ) -> str:
     env_prefix = format_remote_env(remote_env)
+    path_prefix = 'PATH="$HOME/.local/bin:$PATH" '
+    python_bootstrap = (
+        "mkdir -p \"$HOME/.local/bin\" && "
+        "if ! command -v python >/dev/null 2>&1; then "
+        "ln -sfn \"$(command -v python3.10)\" \"$HOME/.local/bin/python\"; "
+        "fi; "
+    )
     quoted_dir = shlex.quote(remote_dir)
     if restart:
         return (
             f"cd {quoted_dir} && "
+            f"{python_bootstrap}"
             "if ss -ltn 'sport = :13000' | grep -q LISTEN; then "
             "echo 'stopping existing stream_server on 127.0.0.1:13000'; "
             "pkill -f 'backend.media_gateway.stream_server' || true; "
             "sleep 2; "
             "fi; "
-            f"{env_prefix} exec ./scripts/server.sh"
+            f"{path_prefix}{env_prefix} exec ./scripts/server.sh"
         )
     return (
         f"cd {quoted_dir} && "
+        f"{python_bootstrap}"
         "if ss -ltn 'sport = :13000' | grep -q LISTEN; then "
         "echo 'stream_server is already listening on 127.0.0.1:13000'; "
         "echo 'Use restart=yes in this launcher if this existing server is stale.'; "
         "sleep infinity; "
         "else "
-        f"{env_prefix} exec ./scripts/server.sh; "
+        f"{path_prefix}{env_prefix} exec ./scripts/server.sh; "
         "fi"
     )
 

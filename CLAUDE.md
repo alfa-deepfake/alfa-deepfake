@@ -39,10 +39,10 @@ back for local preview.
   `signed_packets`). The wire protocol + framing live in the
   `deepfake-media-transport` sibling package (imported as
   `deepfake_media_transport`).
-- **Cluster:** `master@62.183.4.208 -p 22010`, key `/tmp/deepfake_voice_cluster_key`,
-  path `~/work/deepfake-audio-video-inference`. The `deepfake-media-transport`
+- **Cluster:** `ssh -i ~/.ssh/id_ed25519 -p 22010 master@62.183.4.208`,
+  path `/home/master/work/alfa-deepfake/deepfake-voice-inference`. The `deepfake-media-transport`
   and `deepfake-stream-signature` sibling packages are deployed alongside it in
-  `~/work/` and installed editable into its venv.
+  `/home/master/work/alfa-deepfake/` and installed editable into its venv.
 - **Runtime assets (not committed):** `assets/weights/voice_model.pth`,
   `assets/indices/voice_model.index`, `assets/hubert/hubert_base.pt`.
   Deep-Live-Cam expected at `~/workspace_w9line/deep_face/extracted/Deep-Live-Cam`.
@@ -76,7 +76,7 @@ trust chains.
   SHA-256; per-`(session_id, stream_type)` signature chaining; detects
   replay / tamper / invalid / untrusted-key / chain-mismatch. Envelope magic
   `DFS1`. Control stream (type 3) is never signed.
-- **Tests:** `python -m unittest tests.test_stream_signature`.
+- **Tests:** `python3.10 -m unittest tests.test_stream_signature`.
 
 ## deepfake-virtualcam-check
 

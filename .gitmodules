@@ -10,6 +10,6 @@
 [submodule "deepfake-virtualcam-check"]
 	path = deepfake-virtualcam-check
 	url = https://github.com/alfa-deepfake/deepfake-virtualcam-check.git
-[submodule "deepfake-voice-inference"]
-	path = deepfake-voice-inference
-	url = https://github.com/alfa-deepfake/deepfake-voice-inference.git
+[submodule "deepfake-audio-video-inference"]
+	path = deepfake-audio-video-inference
+	url = https://github.com/alfa-deepfake/deepfake-audio-video-inference.git
